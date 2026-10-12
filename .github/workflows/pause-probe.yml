@@ -16,6 +16,8 @@ jobs:
       matrix:
         id: ${{ fromJSON(inputs.ids) }}
     steps:
+      - name: clock source
+        run: cat /sys/devices/system/clocksource/clocksource0/current_clocksource /sys/devices/system/clocksource/clocksource0/available_clocksource
       - name: clocks and round trips
         env:
           MINUTES: ${{ inputs.minutes }}
@@ -40,4 +42,11 @@ jobs:
           PY
       - name: kernel log
         if: always()
-        run: (sudo -n dmesg 2>/dev/null || dmesg 2>/dev/null || true) | grep -iE "soft lockup|hung_task|rcu.*stall" || echo "none"
+        run: (sudo -n dmesg 2>/dev/null || dmesg 2>/dev/null || true) | grep -iE "soft lockup|hung_task|rcu.*stall|clocksource|timekeeping|watchdog|hrtimer|tsc" || echo "none"
+      - name: service watchdogs
+        if: always()
+        run: |
+          for u in systemd-networkd systemd-journald systemd-resolved systemd-logind systemd-udevd systemd-timesyncd; do
+            echo "WATCHDOG $u restarts=$(systemctl show -p NRestarts --value $u 2>/dev/null) watchdog=$(systemctl show -p WatchdogUSec --value $u 2>/dev/null)"
+          done
+          echo "WATCHDOG timeouts=$( (journalctl -b -q --no-pager -g 'Watchdog timeout' 2>/dev/null || true) | wc -l)"
