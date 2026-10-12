@@ -1,0 +1,43 @@
+name: pause-probe
+on:
+  workflow_dispatch:
+    inputs:
+      label: {description: "runs-on label", required: true}
+      ids: {description: "job ids, a JSON list of 1-20 numbers", required: true, default: "[1,2,3,4]"}
+      minutes: {description: "minutes each job runs (5-20)", required: true, default: "10"}
+permissions: {contents: read}
+jobs:
+  probe:
+    name: pause-probe-${{ matrix.id }}
+    runs-on: [self-hosted, linux, x64, "${{ inputs.label }}"]
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        id: ${{ fromJSON(inputs.ids) }}
+    steps:
+      - name: clocks and round trips
+        env:
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, time
+          minutes = int(os.environ["MINUTES"])
+          assert 5 <= minutes <= 20, "minutes must be 5-20"
+          end = time.monotonic() + minutes * 60
+          last_m, last_r, next_net = time.monotonic(), time.time(), 0.0
+          while time.monotonic() < end:
+              time.sleep(1)
+              m, r = time.monotonic(), time.time()
+              print(f"CLOCK mono={m:.3f} real={r:.3f} dmono={m - last_m:.3f} dreal={r - last_r:.3f}", flush=True)
+              last_m, last_r = m, r
+              if m >= next_net:
+                  t0 = time.monotonic()
+                  code = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-m", "20", "-w", "%{http_code}", "https://github.com"],
+                                        capture_output=True, text=True).stdout
+                  print(f"NET code={code or 'none'} rtt={time.monotonic() - t0:.3f}", flush=True)
+                  next_net = m + 15
+          PY
+      - name: kernel log
+        if: always()
+        run: (sudo -n dmesg 2>/dev/null || dmesg 2>/dev/null || true) | grep -iE "soft lockup|hung_task|rcu.*stall" || echo "none"
